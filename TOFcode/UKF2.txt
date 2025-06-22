@@ -1,0 +1,103 @@
+function [X_est] = UKF(anchors, x0, real_positions)
+    % 系统参数
+    n = 3; % 状态维度 [x, y, z]
+    m = size(anchors, 1); % 观测维度由anchors矩阵的行数确定
+
+    % 初始协方差
+    P0 = diag([10, 10, 10]); 
+
+    % 过程噪声
+    qp = 0.1;
+    Q0 = diag([qp, qp, qp]);
+
+    % 观测噪声
+    R = diag(repmat(0.1^2, m, 1));
+
+    % 观测函数
+    h = @(x) sqrt(sum((repmat(x', m, 1) - anchors).^2, 2));
+
+    % 状态转移函数（假设位置不变）
+    f = @(x) x;
+
+    % UKF参数
+    alpha = 1e-3; 
+    beta = 2; 
+    kappa = 0; 
+    lambda = alpha^2 * (n + kappa) - n;
+    c = n + lambda;
+
+    % 权重分配
+    Wm = [lambda/c; 0.5/c*ones(2*n,1)];
+    Wc = Wm;
+    Wc(1) = Wc(1) + (1 - alpha^2 + beta);
+
+    % 初始化
+    x = x0; % 明确x0为初始状态均值
+    P = P0;
+    Q = Q0;
+    num_steps = size(real_positions, 2);
+    X_est = zeros(n, num_steps);
+
+    % 自适应调整参数
+    rho_Q = 0.1; % Q的调整系数
+    rho_P = 0.1; % P的调整系数
+    epsilon = 1e-3; % 残差阈值
+
+    % 仿真循环
+    for t = 1:num_steps
+        % --- Sigma点生成 ---
+        sqrt_P = chol(P + 1e-6*eye(n))';
+        X_sig = [x, x + sqrt_P*sqrt(n + lambda), x - sqrt_P*sqrt(n + lambda)];
+        
+        % --- 预测步骤 ---
+        X_sig_pred = zeros(n, 2*n + 1);
+        for i = 1:2*n+1
+            X_sig_pred(:,i) = f(X_sig(:,i));
+        end
+        x_pred = X_sig_pred * Wm;
+        P_pred = Q;
+        for i = 1:2*n+1
+            P_pred = P_pred + Wc(i)*(X_sig_pred(:,i)-x_pred)*(X_sig_pred(:,i)-x_pred)';
+        end
+        
+        % --- 观测预测 ---
+        Y_sig_pred = zeros(m, 2*n+1);
+        for i = 1:2*n+1
+            Y_sig_pred(:,i) = h(X_sig_pred(:,i));
+        end
+        y_pred = Y_sig_pred * Wm;
+        
+        % --- 协方差计算 ---
+        P_yy = R;
+        P_xy = zeros(n, m);
+        for i = 1:2*n+1
+            dy = Y_sig_pred(:,i) - y_pred;
+            dx = X_sig_pred(:,i) - x_pred;
+            P_yy = P_yy + Wc(i)*(dy*dy');
+            P_xy = P_xy + Wc(i)*(dx*dy');
+        end
+        
+        % --- 卡尔曼增益计算 ---
+        K = P_xy / P_yy;
+        
+        % --- 生成观测值 ---
+        z = h(real_positions(:, t)) + sqrt(R)*randn(m,1);
+        
+        % --- 更新步骤 ---
+        x = x_pred + K*(z - y_pred);
+        P = P_pred - K*P_yy*K';
+        
+        % --- 自适应调整Q和P ---
+        residual = norm(z - y_pred);
+        if residual > epsilon
+            Q = Q + rho_Q * Q;
+            P = P + rho_P * P;
+        else
+            Q = max(Q - rho_Q * Q, 1e-6*eye(n));
+            P = max(P - rho_P * P, 1e-6*eye(n));
+        end
+        
+        % 存储估计结果
+        X_est(:, t) = x;
+    end
+end

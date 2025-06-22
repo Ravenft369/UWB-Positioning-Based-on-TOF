@@ -1,0 +1,24 @@
+function estimated_pos = TOF_localization(anchors, tof_times)
+    c = 299792458; % 光速 (m/s)
+    distances = (tof_times * 1e-9) * c * 1e3; % 转换为距离 (mm)
+    
+    num_anchors = size(anchors, 1);
+    A = zeros(num_anchors-1, 3);
+    b = zeros(num_anchors-1, 1);
+
+    % 以第一个锚点为参考
+    for i = 2:num_anchors
+        A(i-1,:) = 2*(anchors(i,:) - anchors(1,:));
+        b(i-1) = distances(1)^2 - distances(i)^2 + ...
+                 sum(anchors(i,:).^2) - sum(anchors(1,:).^2);
+    end
+    
+    % 只使用与A对应的距离（排除第一个锚点）
+    relevant_distances = distances(2:end);
+    sum_distances = sum(relevant_distances);
+    w = 1 - relevant_distances / sum_distances;  % 计算权重向量
+    W = diag(w);  % 创建(num_anchors-1) x (num_anchors-1)的对角矩阵
+    
+    % 加权最小二乘解
+    estimated_pos = (A' * W * A) \ (A' * W * b);
+end
